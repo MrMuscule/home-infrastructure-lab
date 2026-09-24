@@ -1,0 +1,13 @@
+[Unit]
+Description=Home Lab Python API
+After=network.target
+
+[Service]
+User=danil
+WorkingDirectory=/home/danil/api
+EnvironmentFile=/etc/api.env
+ExecStart=/home/danil/api/venv/bin/python /home/danil/api/app.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
