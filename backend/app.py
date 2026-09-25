@@ -110,6 +110,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
-server = HTTPServer(("10.10.10.2", 8081), Handler)
+server = HTTPServer((os.getenv("API_HOST", "0.0.0.0"), int(os.getenv("API_PORT", "8081"))), Handler)
 print("API started on 10.10.10.2:8081")
 server.serve_forever()
