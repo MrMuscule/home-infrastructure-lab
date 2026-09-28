@@ -1,0 +1,43 @@
+name: Deploy API
+
+on:
+  workflow_run:
+    workflows: ["API CI"]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/github_actions
+          chmod 600 ~/.ssh/github_actions
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy files
+        run: |
+          rsync -avz --delete \
+            --exclude 'api.env' \
+            -e "ssh -i ~/.ssh/github_actions -o IdentitiesOnly=yes" \
+            backend/ \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/api/"
+
+      - name: Rebuild and restart API
+        run: |
+          ssh -i ~/.ssh/github_actions \
+            -o IdentitiesOnly=yes \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+            'cd ~/api && docker compose up -d --build'
+
+      - name: Health check
+        run: |
+          sleep 5
+          curl --fail http://${{ secrets.DEPLOY_HOST }}:8082/health
