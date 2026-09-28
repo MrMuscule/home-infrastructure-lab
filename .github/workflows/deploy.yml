@@ -8,97 +8,27 @@ on:
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
+    runs-on: [self-hosted, Linux, X64, web02]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure SSH
-        shell: bash
-        env:
-          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          set -x
-
-          echo "Runner user:"
-          whoami
-
-          echo "Home:"
-          printf '%s\n' "$HOME"
-
-          echo "Runner temp:"
-          printf '%s\n' "$RUNNER_TEMP"
-
-          echo "Creating SSH directory..."
-          SSH_DIR="$RUNNER_TEMP/deploy-ssh"
-          mkdir -pv "$SSH_DIR"
-
-          echo "Checking SSH directory..."
-          ls -ld "$SSH_DIR"
-
-          echo "Checking secret presence..."
-          if [ -z "$DEPLOY_KEY" ]; then
-            echo "ERROR: DEPLOY_SSH_KEY is empty"
-            exit 1
-          else
-            echo "DEPLOY_SSH_KEY is present"
-          fi
-
-          echo "Writing private key..."
-          printf '%s\n' "$DEPLOY_KEY" > "$SSH_DIR/github_actions"
-
-          echo "Setting permissions..."
-          chmod 600 "$SSH_DIR/github_actions"
-
-          echo "Checking key file..."
-          ls -l "$SSH_DIR/github_actions"
-
-          echo "Scanning host key..."
-          ssh-keyscan -H "$DEPLOY_HOST" > "$SSH_DIR/known_hosts"
-
-          echo "SSH configuration complete"
-
-          echo "SSH_DIR=$SSH_DIR" >> "$GITHUB_ENV"
-
-      - name: Test SSH connection
-        shell: bash
-        run: |
-          ssh \
-            -i "$SSH_DIR/github_actions" \
-            -o IdentitiesOnly=yes \
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-            "echo SSH connection successful"
-
       - name: Deploy files
-        shell: bash
         run: |
-          rsync -avz --delete \
+          rsync -av --delete \
             --exclude 'api.env' \
             --exclude 'venv/' \
             --exclude '__pycache__/' \
-            -e "ssh -i $SSH_DIR/github_actions -o IdentitiesOnly=yes -o UserKnownHostsFile=$SSH_DIR/known_hosts" \
-            backend/ \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/api/"
+            backend/ /home/danil/api/
 
       - name: Rebuild and restart API
-        shell: bash
         run: |
-          ssh \
-            -i "$SSH_DIR/github_actions" \
-            -o IdentitiesOnly=yes \
-            -o UserKnownHostsFile="$SSH_DIR/known_hosts" \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-            'cd ~/api && docker compose up -d --build'
+          cd /home/danil/api
+          docker compose up -d --build
 
       - name: Health check
-        shell: bash
         run: |
           sleep 5
-          curl --fail \
-            "http://${{ secrets.DEPLOY_HOST }}:8082/health"
-
-          echo "Deployment successful"
+          curl --fail http://127.0.0.1:8082/health
