@@ -1,0 +1,47 @@
+---
+- name: Ensure API directory exists
+  ansible.builtin.file:
+    path: /home/danil/api
+    state: directory
+    owner: danil
+    group: danil
+    mode: "0755"
+
+- name: Deploy API application files
+  ansible.builtin.copy:
+    src: "{{ api_source_dir }}/{{ item }}"
+    dest: "/home/danil/api/{{ item }}"
+    owner: danil
+    group: danil
+    mode: "0644"
+  loop:
+    - app.py
+    - Dockerfile
+    - compose.yaml
+    - requirements.txt
+    - api.env.example
+  register: api_files
+
+- name: Build and start API containers after application changes
+  community.docker.docker_compose_v2:
+    project_src: /home/danil/api
+    state: present
+    build: always
+  become_user: danil
+  when: api_files.changed
+
+- name: Ensure API containers are running
+  community.docker.docker_compose_v2:
+    project_src: /home/danil/api
+    state: present
+  become_user: danil
+  when: not api_files.changed
+
+- name: Wait for API health endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8082/health
+    status_code: 200
+  register: api_health
+  retries: 10
+  delay: 3
+  until: api_health.status == 200
