@@ -15,20 +15,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Deploy files
+      - name: Deploy with Ansible
         run: |
-          rsync -av --delete \
-            --exclude 'api.env' \
-            --exclude 'venv/' \
-            --exclude '__pycache__/' \
-            backend/ /home/danil/api/
-
-      - name: Rebuild and restart API
-        run: |
-          cd /home/danil/api
-          docker compose up -d --build
-
-      - name: Health check
-        run: |
-          sleep 5
-          curl --fail http://127.0.0.1:8082/health
+          cd ansible
+          ansible-playbook -i inventory.ini site.yml --limit web02
