@@ -17,22 +17,22 @@ jobs:
 
       - name: Configure SSH
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/github_actions
-          chmod 600 ~/.ssh/github_actions
-          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          mkdir -p "$HOME/.ssh"
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > "$HOME/.ssh/github_actions"
+          chmod 600 "$HOME/.ssh/github_actions"
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> "$HOME/.ssh/known_hosts"
 
       - name: Deploy files
         run: |
           rsync -avz --delete \
             --exclude 'api.env' \
-            -e "ssh -i ~/.ssh/github_actions -o IdentitiesOnly=yes" \
+            -e "ssh -i $HOME/.ssh/github_actions -o IdentitiesOnly=yes" \
             backend/ \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/home/${{ secrets.DEPLOY_USER }}/api/"
 
       - name: Rebuild and restart API
         run: |
-          ssh -i ~/.ssh/github_actions \
+          ssh -i "$HOME/.ssh/github_actions" \
             -o IdentitiesOnly=yes \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
             'cd ~/api && docker compose up -d --build'
