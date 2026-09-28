@@ -1,0 +1,2 @@
+---
+api_source_dir: "{{ playbook_dir }}/../backend"

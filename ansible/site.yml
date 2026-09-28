@@ -1,0 +1,23 @@
+---
+- name: Configure lab servers
+  hosts: lab
+  become: true
+
+  roles:
+    - common
+    - node_exporter
+
+- name: Configure web01
+  hosts: routers
+  become: true
+
+  roles:
+    - nginx
+
+- name: Deploy API
+  hosts: servers
+  become: true
+
+  roles:
+    - api
+

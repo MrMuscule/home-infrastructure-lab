@@ -96,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             response = {
                 "status": "ok",
-                "server": "web02"
+                "server": "web02-ansible"
             }
 
             self.send_response(200)

@@ -1,0 +1,16 @@
+---
+- name: Install common packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - git
+      - htop
+      - vim
+    state: present
+    update_cache: true
+
+- name: Ensure SSH service is enabled and running
+  ansible.builtin.service:
+    name: ssh
+    state: started
+    enabled: true
