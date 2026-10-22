@@ -5,3 +5,9 @@ backend/__pycache__/
 *.env
 *.swp
 *~
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/tfplan
+terraform/plan.json
+terraform/provider-schema.json
