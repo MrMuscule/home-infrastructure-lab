@@ -1,264 +1,160 @@
+**English** · [Русский](README.ru.md)
+
 # Home Infrastructure Lab
 
-Домашняя инфраструктурная лаборатория для практики Linux, сетей, мониторинга, автоматизации и DevOps.
+A home lab for practising Linux, networking, monitoring, automation and DevOps: a Python API backed by PostgreSQL, deployed with Ansible and GitHub Actions behind an Nginx reverse proxy on Hyper-V VMs.
 
-Всё крутится на Hyper-V на Windows-хосте в сети `LAB-NET` (`10.10.10.0/24`). Приложение (Python API + PostgreSQL) деплоится через GitHub Actions и Ansible, веб-роутер и базовые роли настраиваются Ansible.
+![Terraform](https://img.shields.io/badge/Terraform-7B42BC?logo=terraform&logoColor=white)
+![Ansible](https://img.shields.io/badge/Ansible-EE0000?logo=ansible&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-2088FF?logo=githubactions&logoColor=white)
+![API CI](https://github.com/MrMuscule/home-infrastructure-lab/actions/workflows/ci.yml/badge.svg)
 
-## Содержание
+## Architecture
 
-- [Архитектура](#архитектура)
-- [Хосты](#хосты)
-- [Сеть и имена](#сеть-и-имена)
-- [Backend API](#backend-api)
-- [Ansible](#ansible)
-- [CI/CD](#cicd)
-- [Terraform](#terraform)
-- [Развёртывание](#развёртывание)
-- [Известные ограничения и ручные шаги](#известные-ограничения-и-ручные-шаги)
-- [Структура репозитория](#структура-репозитория)
+```mermaid
+flowchart LR
+    client([Client]) -->|"HTTP :80<br/>Host: web01.lab"| web01
+    client -->|"HTTP :80<br/>Host: grafana.lab"| web01
 
-## Архитектура
+    subgraph LAB["LAB-NET 10.10.10.0/24 (Hyper-V)"]
+        web01["<b>web01</b> 10.10.10.1<br/>Nginx :80<br/>reverse proxy"]
+        web02["<b>web02</b> 10.10.10.2<br/>API (Docker) :8082<br/>PostgreSQL :5432<br/>GitHub runner"]
+        mon["<b>monitor01</b> 10.10.10.3<br/>Grafana :3000<br/>Prometheus :9090<br/>GitHub runner (Ansible)"]
+        tf["<b>tf01</b> 10.10.10.4<br/>Terraform-managed VM<br/>dnsmasq :53"]
+    end
 
-```
-                        Windows host (Hyper-V), 10.10.10.254
-                                      |
-                              LAB-NET 10.10.10.0/24
-   +----------------+---------------+---------------+----------------+
-   |                |               |               |                |
- web01            web02         monitor01         tf01
- 10.10.10.1       10.10.10.2    10.10.10.3        10.10.10.4
- Nginx            API (Docker)  Grafana :3000     VM из Terraform
- reverse proxy    :8082         GitHub runner     (пока без ролей)
- + NAT            PostgreSQL    (Ansible)
- (2-я NIC в       GitHub runner
-  Default Switch)
+    web01 -->|"proxy :8082"| web02
+    web01 -->|"proxy :3000"| mon
+    web02 -->|"SQL :5432"| pg[("PostgreSQL<br/>labdb")]
+    mon -.->|"scrape :9100"| web01
+    mon -.->|"scrape :9100"| web02
+    mon -.->|"scrape :9100"| tf
 ```
 
-Поток запросов:
+Request path: `client → Nginx (web01:80) → API container (web02:8082 → 8081) → PostgreSQL`.
 
-```
-клиент -> web01 (Nginx :80) -> web02:8082 (API в контейнере, порт 8081 внутри)
-клиент -> web01 (Nginx :80) -> monitor01:3000 (Grafana)
-```
+## Hosts
 
-## Хосты
+| Name | IP | Role | Services |
+|---|---|---|---|
+| web01 | 10.10.10.1 | Edge: reverse proxy and NAT | Nginx `:80`, node-exporter `:9100` |
+| web02 | 10.10.10.2 | Application | API container `:8082`, PostgreSQL `:5432`, GitHub runner, node-exporter `:9100` |
+| monitor01 | 10.10.10.3 | Monitoring and CI deploys | Grafana `:3000`, Prometheus `:9090`, GitHub runner (runs Ansible), node-exporter `:9100` |
+| tf01 | 10.10.10.4 | Terraform-managed VM, control node planned | dnsmasq `:53`, node-exporter `:9100` |
 
-| Хост      | IP           | Роль                                                    | Управляется            |
-|-----------|--------------|---------------------------------------------------------|------------------------|
-| web01     | 10.10.10.1   | Nginx: reverse proxy, NAT. Второй NIC в `Default Switch` | Ansible (группа `routers`) |
-| web02     | 10.10.10.2   | API (Docker Compose), PostgreSQL, GitHub runner         | Ansible (группа `servers`) |
-| monitor01 | 10.10.10.3   | Grafana, GitHub runner с Ansible                        | частично (node_exporter) |
-| tf01      | 10.10.10.4   | VM, созданная Terraform                                 | только базовые роли    |
+All hosts run Ubuntu Server 26.04 and are reachable over SSH with key-based auth.
 
-Все хосты: Ubuntu 26.04, пользователь `danil`, доступ по SSH-ключу. Ansible подключается под `danil` (`remote_user` в `ansible/ansible.cfg`).
+## Stack
 
-> Адреса и роли описаны в `ansible/inventory.ini`. Если меняется IP — правьте там.
+| Tool | Purpose | Why |
+|---|---|---|
+| Terraform (`windsorcli/hyperv` 0.4.0) | Hyper-V VM definitions | Reproducible VM layout as code |
+| Ansible | Configuration, app deploy, Nginx | Idempotent, agentless, readable playbooks |
+| Nginx | Reverse proxy by `Host` header | Single entry point for every service |
+| Python (stdlib HTTP + psycopg) | Telemetry API | Small surface, no framework needed for a health and ingest API |
+| PostgreSQL 18 | Storage | Mature, SQL, easy to back up |
+| Docker Compose | API packaging | Same image in CI and on the server |
+| GitHub Actions | CI builds, deploy trigger | Self-hosted runners keep deploys inside the LAB-NET |
+| Prometheus + Grafana | Metrics and dashboards | Standard open-source monitoring pair |
 
-## Сеть и имена
-
-Nginx на web01 маршрутизирует запросы по `Host`-заголовку:
-
-| Имя           | Куда проксируется          | Что там               |
-|---------------|----------------------------|-----------------------|
-| `web01.lab`   | `http://10.10.10.2:8082`   | API                   |
-| `grafana.lab` | `http://10.10.10.3:3000`   | Grafana               |
-
-Чтобы открыть эти имена с клиента, добавьте в hosts-файл клиента (`C:\Windows\System32\drivers\etc\hosts` или `/etc/hosts`) строки:
-
-```
-10.10.10.1  web01.lab grafana.lab
-```
-
-Конфиг прокси: `ansible/roles/nginx/templates/lab-api.conf.j2`.
-
-## Backend API
-
-Исходники в `backend/`. Простой HTTP-сервер на стандартной библиотеке Python с драйвером `psycopg` для PostgreSQL.
-
-### Эндпоинты
-
-| Метод | Путь          | Описание                                                        | Ответ          |
-|-------|---------------|-----------------------------------------------------------------|----------------|
-| GET   | `/health`     | Проверка, что сервис жив                                        | `200`          |
-| GET   | `/health/db`  | Проверка подключения к PostgreSQL                               | `200` / `503`  |
-| POST  | `/telemetry`  | Сохранить метрику в таблицу `telemetry`                         | `201` / `400`  |
-
-Тело запроса для `/telemetry` (JSON):
-
-```json
-{
-  "server_name": "web02",
-  "metric_name": "cpu_load",
-  "metric_value": 0.42
-}
-```
-
-Пример:
-
-```bash
-curl http://web01.lab/health
-curl -X POST http://web01.lab/telemetry \
-  -H "Content-Type: application/json" \
-  -d '{"server_name":"web02","metric_name":"cpu_load","metric_value":0.42}'
-```
-
-Любой другой путь возвращает `404`.
-
-### Конфигурация
-
-Переменные окружения (читаются из `backend/api.env` на сервере):
-
-| Переменная    | Пример         | Назначение                          |
-|---------------|----------------|-------------------------------------|
-| `DB_HOST`     | `127.0.0.1`    | Хост PostgreSQL                     |
-| `DB_NAME`     | `labdb`        | Имя базы                            |
-| `DB_USER`     | `labapp`       | Пользователь БД                     |
-| `DB_PASSWORD` | `CHANGE_ME`    | Пароль БД                           |
-| `API_HOST`    | `0.0.0.0`      | Адрес, на котором слушает приложение (по умолчанию `0.0.0.0`) |
-| `API_PORT`    | `8081`         | Порт приложения (по умолчанию `8081`) |
-
-Шаблон: `backend/api.env.example`. Реальный `api.env` **не коммитится** (см. `.gitignore`).
-
-### Docker
-
-- `backend/Dockerfile` — образ на `python:3.14-slim`, по умолчанию слушает `8081`.
-- `backend/compose.yaml` — сервис `home-api`, порт хоста `8082` -> контейнер `8081`, `restart: unless-stopped`.
-
-Локальный запуск (нужна доступная PostgreSQL и заполненный `api.env`):
-
-```bash
-cd backend
-cp api.env.example api.env   # и заполнить DB_PASSWORD
-docker compose up --build
-```
-
-### Схема БД
-
-В репозитории схемы нет. Приложение ожидает таблицу `telemetry` с колонками `server_name`, `metric_name`, `metric_value`. Создайте её на web02 вручную (SQL в репозиторий не добавлен).
-
-## Ansible
-
-Каталог `ansible/`. Инвентарь — `inventory.ini`, главный плейбук — `site.yml`.
-
-### Группы инвентаря
-
-| Группа       | Хосты     |
-|--------------|-----------|
-| `routers`    | web01     |
-| `servers`    | web02     |
-| `monitoring` | monitor01 |
-| `terraform`  | tf01      |
-| `lab`        | все выше (объединяет остальные группы) |
-
-### Плейбук `site.yml`
-
-| Play             | Группа     | Роли                  | Что делает |
-|------------------|------------|-----------------------|------------|
-| Configure lab servers | `lab`  | `common`, `node_exporter` | Базовые пакеты (curl, git, htop, vim), SSH-сервис, Node Exporter |
-| Configure web01  | `routers`  | `nginx`               | Установка Nginx, конфиг `lab-api.conf`, отключение default-сайта |
-| Deploy API       | `servers`  | `api`                 | Копирование файлов `backend/` в `/home/danil/api`, сборка и запуск контейнера, проверка `/health` |
-
-Роль `api` пересобирает контейнер только если изменились файлы приложения (`when: api_files.changed`).
-
-### Запуск
-
-```bash
-cd ansible
-
-# весь лаб
-ansible-playbook site.yml
-
-# только один хост
-ansible-playbook site.yml --limit web02
-
-# проверка без изменений
-ansible-playbook site.yml --check --diff
-```
-
-Требования на управляющей машине: Ansible и коллекция `community.docker` (нужна для `docker_compose_v2`), SSH-доступ к хостам по ключу.
-
-## CI/CD
-
-Два workflow в `.github/workflows/`:
-
-1. **`ci.yml` — API CI.** Запускается на push и PR в `main`. Собирает Docker-образ `home-api:test` из `./backend` и проверяет, что он появился. Runner — `ubuntu-latest`.
-2. **`deploy.yml` — Deploy API.** Запускается после успешного `API CI` на ветке `main`. Работает на self-hosted runner (`[self-hosted, Linux, X64]`, поднят на monitor01) и выполняет:
-
-   ```bash
-   cd ansible
-   /usr/bin/ansible-playbook -i inventory.ini site.yml --limit web02
-   ```
-
-Поток изменений: push в `main` -> CI собирает образ -> deploy гоняет Ansible на web02 -> контейнер пересобирается и проверяется по `/health`.
-
-## Terraform
-
-Каталог `terraform/`. Провайдер `windsorcli/hyperv` (версия `0.4.0`), backend `local`.
-
-Описывает:
-
-- `lab-web01` — VM поколения 2, 7 vCPU, 4 ГБ RAM, два NIC (`Default Switch` и `LAB-NET`);
-- `lab-tf01` — VM поколения 2, 2 vCPU, 4 ГБ RAM, один NIC (`LAB-NET`), загрузка с ISO Ubuntu 26.04, отдельный VHDX на 20 ГБ.
-
-Запуск:
-
-```bash
-cd terraform
-terraform init
-terraform plan -out=tfplan
-terraform apply tfplan
-```
-
-Файлы состояния (`*.tfstate*`), `tfplan`, `.terraform/` в `.gitignore` и в git не попадают — там могут быть пути и чувствительные данные.
-
-## Развёртывание
-
-Порядок с нуля:
-
-1. **Hyper-V и сеть.** Создать виртуальный свитч `LAB-NET` (внутренний). Поднять VM (вручную или через `terraform apply`).
-2. **Базовая настройка ОС.** На каждой VM: пользователь `danil`, `openssh-server`, SSH-ключ. Для web01 — второй NIC в `Default Switch` (выход в интернет, NAT).
-3. **Базовые роли и прокси.** С управляющей машины: `ansible-playbook site.yml`.
-4. **PostgreSQL на web02.** Установить вручную, создать БД `labdb`, пользователя `labapp`, таблицу `telemetry`.
-5. **Файл `api.env` на web02.** Создать из `backend/api.env.example` в `/home/danil/api/api.env` и задать `DB_PASSWORD`. Без него `docker compose` не стартует (см. ниже).
-6. **Первый деплой API.** Выполнить `ansible-playbook site.yml --limit web02` или запушить изменения в `main`.
-7. **Grafana на monitor01.** Установить вручную, слушает `:3000`.
-8. **GitHub runner'ы.** Self-hosted runner на monitor01 (с Ansible) для деплоя.
-
-## Известные ограничения и ручные шаги
-
-- **`api.env` не создаётся Ansible.** Роль `api` копирует только `api.env.example`. Файл `api.env` с реальным паролем нужно положить на web02 вручную.
-- **PostgreSQL и Grafana не настраиваются Ansible.** Установлены вручную, в роли их нет.
-- **Схема БД не в репозитории.** Таблица `telemetry` создаётся вручную.
-- **Hard-coded значения.** Имя сервера в ответе `/health` (`web02-ansible`) и текст в лог-сообщении приложения зашиты в код. Путь `/home/danil/api` и пользователь `danil` — в роли `api`.
-- **Terraform: пути в переменных.** Пути к дискам и ISO задаются в `terraform/terraform.tfvars` (шаблон — `terraform.tfvars.example`), в git они не попадают.
-- **Пустые каталоги.** `docker/`, `monitoring/`, `nginx/` сейчас пустые (git их не отслеживает) — зарезервированы под будущие конфиги.
-- **Секреты.** Никогда не коммитьте `api.env`, ключи SSH, `*.tfstate`. См. `.gitignore`.
-
-## Структура репозитория
+## Repository structure
 
 ```
 .
 ├── .github/workflows/
-│   ├── ci.yml                 # сборка Docker-образа API
-│   └── deploy.yml             # деплой через Ansible на web02
+│   ├── ci.yml              # API CI: builds the Docker image
+│   └── deploy.yml          # Deploy API via Ansible on web02
 ├── ansible/
 │   ├── ansible.cfg
-│   ├── inventory.ini         # хосты и группы
-│   ├── site.yml              # главный плейбук
+│   ├── inventory.ini       # host groups: routers, servers, monitoring, terraform, lab
+│   ├── site.yml            # main playbook
 │   └── roles/
-│       ├── common/           # базовые пакеты, SSH
-│       ├── node_exporter/    # Prometheus Node Exporter
-│       ├── nginx/            # reverse proxy на web01
-│       └── api/              # деплой API на web02
+│       ├── common/         # base packages, SSH
+│       ├── node_exporter/  # Prometheus node exporter
+│       ├── nginx/          # reverse proxy on web01
+│       └── api/            # API deploy on web02
 ├── backend/
-│   ├── app.py                # HTTP API + psycopg
+│   ├── app.py              # HTTP API with psycopg
 │   ├── Dockerfile
 │   ├── compose.yaml
 │   ├── requirements.txt
 │   └── api.env.example
-├── terraform/                # VM в Hyper-V (не под git)
-├── docker/                   # пусто
-├── monitoring/               # пусто
-├── nginx/                    # пусто
+├── terraform/
+│   ├── main.tf             # VM definitions
+│   ├── variables.tf        # inputs (paths, sizes, switch names)
+│   └── terraform.tfvars.example
 └── README.md
 ```
+
+Secrets, state files and local config are git-ignored: `api.env`, `terraform.tfvars`, `*.tfstate`, SSH keys.
+
+## Quick start
+
+Starting from an empty Hyper-V host:
+
+1. **Network.** Create an internal virtual switch `LAB-NET`. Give web01 a second NIC on the `Default Switch` for outbound NAT.
+2. **VMs.** Create the VMs with Terraform:
+   ```bash
+   cd terraform
+   cp terraform.tfvars.example terraform.tfvars   # set local disk and ISO paths
+   terraform init
+   terraform plan -out=tfplan
+   terraform apply tfplan
+   ```
+   Install Ubuntu Server on each VM, create user `danil`, enable `openssh-server` and add your public key.
+3. **Base config and proxy.** From a control machine with SSH access:
+   ```bash
+   cd ansible
+   ansible-playbook site.yml
+   ```
+4. **PostgreSQL on web02** (manual, not in Ansible yet): create database `labdb`, user `labapp`, and table `telemetry` with columns `server_name`, `metric_name`, `metric_value`.
+5. **API secrets.** Copy `backend/api.env.example` to `/home/danil/api/api.env` on web02 and set `DB_*`. The file is never committed.
+6. **Deploy the API.** `ansible-playbook site.yml --limit web02`, or push to `main` and let GitHub Actions do it.
+7. **Grafana on monitor01** (manual install, listens on `:3000`).
+
+## How to verify
+
+```bash
+# Through the Nginx proxy (add web01.lab and grafana.lab to your hosts file first)
+curl -i http://web01.lab/health        # HTTP/1.1 200 OK
+curl -i http://web01.lab/health/db     # HTTP/1.1 200 OK when PostgreSQL is reachable
+
+curl -i -X POST http://web01.lab/telemetry \
+  -H "Content-Type: application/json" \
+  -d '{"server_name":"web02","metric_name":"cpu_load","metric_value":0.42}'
+# HTTP/1.1 201 Created
+
+curl -I http://grafana.lab/            # HTTP/1.1 302 Found (login redirect)
+```
+
+Ansible idempotency: a second `ansible-playbook site.yml` run should report `changed=0` for unchanged hosts.
+
+## Monitoring
+
+- **Node metrics:** `node_exporter` on every VM (`:9100`), scraped by Prometheus on monitor01.
+- **Dashboards:** Grafana on monitor01, reachable at `http://grafana.lab/` through Nginx.
+- **Screenshots:** planned in `docs/img/`.
+
+## Roadmap
+
+- [ ] Verify `terraform plan` shows no changes for existing VMs (import into state, modules)
+- [ ] Ansible `common` role: users, SSH hardening, ufw, NTP
+- [ ] PostgreSQL managed by Ansible, with `pg_dump` backups on a systemd timer
+- [ ] Kafka (KRaft, single node) for API events, with a consumer that writes to PostgreSQL
+- [ ] Zabbix server and agents, with a dashboard and alert triggers
+- [ ] k3s cluster, Helm chart or manifests for the API, Nginx routing to the Ingress
+- [ ] CI linters: `terraform fmt/validate`, `ansible-lint`, `yamllint`, `ruff`, `pytest`
+
+## Skills demonstrated
+
+- **Infrastructure as code:** Terraform for Hyper-V VMs, with variables and state kept out of git.
+- **Configuration management:** Ansible roles, inventory groups, idempotent playbooks, `--limit` and `--check --diff` workflows.
+- **Networking:** LAN design with NAT uplink, hostname-based reverse proxy routing, `Host`-header routing in Nginx.
+- **Containers:** Docker image and Compose for the API, built in CI.
+- **CI/CD:** GitHub Actions with a self-hosted runner that deploys inside the lab network.
+- **Databases:** PostgreSQL setup, schema and access, connection from a containerised service.
+- **Observability:** Prometheus node exporters and a Grafana instance behind the proxy.
+- **Security hygiene:** no secrets in git, env-based configuration, history scrubbed of personal identifiers before publication.
