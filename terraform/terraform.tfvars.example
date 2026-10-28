@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars and fill in local paths.
+# terraform.tfvars is git-ignored and must not be committed.
+
+web01_disk_path     = "D:/path/to/vms/lab-web01/Virtual Hard Disks/lab-web01.avhdx"
+tf01_disk_path      = "D:/path/to/vms/lab-tf01/Virtual Hard Disks/lab-tf01.vhdx"
+ubuntu_iso_path     = "C:/path/to/iso/ubuntu-server-amd64.iso"
+
+# Optional overrides (defaults are in variables.tf):
+# lab_switch_name      = "LAB-NET"
+# internet_switch_name = "Default Switch"
+# web01_vcpu           = 7
+# tf01_vcpu            = 2
