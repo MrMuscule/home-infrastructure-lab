@@ -21,14 +21,15 @@ flowchart LR
 
     subgraph LAB["LAB-NET 10.10.10.0/24 (Hyper-V)"]
         web01["<b>web01</b> 10.10.10.1<br/>Nginx :80<br/>reverse proxy"]
-        web02["<b>web02</b> 10.10.10.2<br/>API (Docker) :8082<br/>PostgreSQL :5432<br/>GitHub runner"]
+        web02["<b>web02</b> 10.10.10.2<br/>API (Docker) :8082<br/>GitHub runner"]
+        pg[("<b>PostgreSQL</b> :5432<br/>labdb")]
         mon["<b>monitor01</b> 10.10.10.3<br/>Grafana :3000<br/>Prometheus :9090<br/>GitHub runner (Ansible)"]
-        tf["<b>tf01</b> 10.10.10.4<br/>Terraform-managed VM<br/>dnsmasq :53"]
+        tf["<b>tf01</b> 10.10.10.4<br/>control node (Terraform/Ansible)<br/>dnsmasq :53"]
     end
 
     web01 -->|"proxy :8082"| web02
     web01 -->|"proxy :3000"| mon
-    web02 -->|"SQL :5432"| pg[("PostgreSQL<br/>labdb")]
+    web02 -->|"SQL :5432"| pg
     mon -.->|"scrape :9100"| web01
     mon -.->|"scrape :9100"| web02
     mon -.->|"scrape :9100"| tf
@@ -43,7 +44,7 @@ Request path: `client → Nginx (web01:80) → API container (web02:8082 → 808
 | web01 | 10.10.10.1 | Edge: reverse proxy and NAT | Nginx `:80`, node-exporter `:9100` |
 | web02 | 10.10.10.2 | Application | API container `:8082`, PostgreSQL `:5432`, GitHub runner, node-exporter `:9100` |
 | monitor01 | 10.10.10.3 | Monitoring and CI deploys | Grafana `:3000`, Prometheus `:9090`, GitHub runner (runs Ansible), node-exporter `:9100` |
-| tf01 | 10.10.10.4 | Terraform-managed VM, control node planned | dnsmasq `:53`, node-exporter `:9100` |
+| tf01 | 10.10.10.4 | Control node (Terraform/Ansible) | dnsmasq `:53`, node-exporter `:9100` |
 
 All hosts run Ubuntu Server 26.04 and are reachable over SSH with key-based auth.
 
@@ -96,7 +97,7 @@ Secrets, state files and local config are git-ignored: `api.env`, `terraform.tfv
 Starting from an empty Hyper-V host:
 
 1. **Network.** Create an internal virtual switch `LAB-NET`. Give web01 a second NIC on the `Default Switch` for outbound NAT.
-2. **VMs.** Create the VMs with Terraform:
+2. **VMs.** Create the VMs with Terraform (not yet validated against a live host — see Roadmap):
    ```bash
    cd terraform
    cp terraform.tfvars.example terraform.tfvars   # set local disk and ISO paths
@@ -136,7 +137,9 @@ Ansible idempotency: a second `ansible-playbook site.yml` run should report `cha
 
 - **Node metrics:** `node_exporter` on every VM (`:9100`), scraped by Prometheus on monitor01.
 - **Dashboards:** Grafana on monitor01, reachable at `http://grafana.lab/` through Nginx.
-- **Screenshots:** planned in `docs/img/`.
+- **Dashboard:** Node Exporter Full, showing all four hosts.
+
+![Grafana dashboard with all four lab hosts](docs/img/grafana.png)
 
 ## Roadmap
 
@@ -152,9 +155,9 @@ Ansible idempotency: a second `ansible-playbook site.yml` run should report `cha
 
 - **Infrastructure as code:** Terraform for Hyper-V VMs, with variables and state kept out of git.
 - **Configuration management:** Ansible roles, inventory groups, idempotent playbooks, `--limit` and `--check --diff` workflows.
-- **Networking:** LAN design with NAT uplink, hostname-based reverse proxy routing, `Host`-header routing in Nginx.
+- **Networking:** LAN design with NAT uplink, hostname-based reverse proxy routing in Nginx.
 - **Containers:** Docker image and Compose for the API, built in CI.
 - **CI/CD:** GitHub Actions with a self-hosted runner that deploys inside the lab network.
 - **Databases:** PostgreSQL setup, schema and access, connection from a containerised service.
 - **Observability:** Prometheus node exporters and a Grafana instance behind the proxy.
-- **Security hygiene:** no secrets in git, env-based configuration, history scrubbed of personal identifiers before publication.
+- **Security hygiene:** no secrets in git, env-based configuration.

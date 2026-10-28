@@ -29,7 +29,7 @@
    |                |               |               |                |
  web01            web02         monitor01         tf01
  10.10.10.1       10.10.10.2    10.10.10.3        10.10.10.4
- Nginx            API (Docker)  Grafana :3000     VM из Terraform
+ Nginx            API (Docker)  Grafana :3000     control node (Terraform/Ansible)
  reverse proxy    :8082         GitHub runner     (пока без ролей)
  + NAT            PostgreSQL    (Ansible)
  (2-я NIC в       GitHub runner
@@ -50,7 +50,7 @@
 | web01     | 10.10.10.1   | Nginx: reverse proxy, NAT. Второй NIC в `Default Switch` | Ansible (группа `routers`) |
 | web02     | 10.10.10.2   | API (Docker Compose), PostgreSQL, GitHub runner         | Ansible (группа `servers`) |
 | monitor01 | 10.10.10.3   | Grafana, GitHub runner с Ansible                        | частично (node_exporter) |
-| tf01      | 10.10.10.4   | VM, созданная Terraform                                 | только базовые роли    |
+| tf01      | 10.10.10.4   | Control node (Terraform/Ansible)                        | dnsmasq, node-exporter |
 
 Все хосты: Ubuntu 26.04, пользователь `danil`, доступ по SSH-ключу. Ansible подключается под `danil` (`remote_user` в `ansible/ansible.cfg`).
 
@@ -217,7 +217,7 @@ terraform apply tfplan
 
 Порядок с нуля:
 
-1. **Hyper-V и сеть.** Создать виртуальный свитч `LAB-NET` (внутренний). Поднять VM (вручную или через `terraform apply`).
+1. **Hyper-V и сеть.** Создать виртуальный свитч `LAB-NET` (внутренний). Поднять VM (вручную или через `terraform apply`; сценарий Terraform не проверен на живом хосте — см. раздел «Известные ограничения»).
 2. **Базовая настройка ОС.** На каждой VM: пользователь `danil`, `openssh-server`, SSH-ключ. Для web01 — второй NIC в `Default Switch` (выход в интернет, NAT).
 3. **Базовые роли и прокси.** С управляющей машины: `ansible-playbook site.yml`.
 4. **PostgreSQL на web02.** Установить вручную, создать БД `labdb`, пользователя `labapp`, таблицу `telemetry`.
