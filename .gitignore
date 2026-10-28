@@ -1,13 +1,33 @@
-backend/venv/
-backend/__pycache__/
-*.pyc
+# Secrets and local config
 .env
+.env.*
+!.env.example
 *.env
+!*.env.example
+*.pem
+*.key
+id_*
+!id_*.pub
+.ssh/
+*.tfvars
+!*.tfvars.example
+*.vault-pass
+
+# Terraform state and plans
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+plan.json
+provider-schema.json
+
+# Tooling and local dirs
+.claude/
+backend/venv/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log
 *.swp
 *~
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.backup
-terraform/tfplan
-terraform/plan.json
-terraform/provider-schema.json
